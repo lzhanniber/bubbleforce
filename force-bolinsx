@@ -1,0 +1,490 @@
+//AXI case
+#define NOT_PRINCIPLE 0
+int pic=0;
+scalar cs1[],css[];
+scalar vort[];
+face vector uf1[], uf2[];
+face vector fs1[],fss[];
+vector u1[],u2[];
+
+face vector muv[];
+//scalar eta[];
+scalar p_d[];
+vector u_st[],u_st2[], g_st[], g_st2[];
+face vector mu_st[];
+scalar sh_local[];
+
+
+double Sig=0.001*2.;
+double SigR=1.;
+double aspect_ratio = 1.0;
+double bb = 1.0;
+double aa = 1.0;
+#define Re 100.
+#define MUSTAR (0.01)
+#define RHOSTAR (0.01)
+#define CDT (0.005)
+#include "h/embedSlip.h"
+#include "axi.h"
+#include "h/2nd_drop.h"
+//#include "navier-stokes/centered_sbim.h"
+#include "navier-stokes/centered.h"
+//#include "h/centered_A_concen.h"
+#include "h/mass-transfer.h"
+//#include "h/concen.h"
+#include "h/embed_v_drop_np2_A.h"
+#include "h/force2D.h"
+#include "view.h"
+
+/**
+This is the maximum level of refinement i.e. an equivalent maximum
+resolution of $256^3$. */
+
+int maxlevel = 11;
+const double tend = 100;
+
+/**
+We need a new field to define the viscosity. */
+
+#define U0 1.
+#define R0 1.
+
+#define WIDTH 160.
+#define Sr 0.
+#define belta U0*Sr/2/R0
+#define U(y) (U0+belta*y)
+
+/**
+The domain size is $16^3$. We move the origin so that the center of
+the unit sphere is not too close to boundaries. */
+
+int main()
+{
+  init_grid(32);
+  size(WIDTH);
+  origin(-L0 / 2., 0.0);
+  mu = muv;
+  //periodic(right);
+  TOLERANCE = 1E-6;
+  bb = pow(aspect_ratio, 1.0/3.0);
+  aa = bb / aspect_ratio;
+  CFL = 0.8;
+  Pe = 100;
+  DT = CDT;
+  run();
+}
+
+/**
+The viscosity is just $1/Re$, because we chose a sphere of diameter
+unity and an unit inflow velocity. */
+
+event properties (i++)
+{
+  boundary((scalar *){u});
+  trash({uf});
+  foreach_face()
+      uf.x[] = fm.x[] * face_value(u.x, 0);
+  boundary((scalar *){uf});
+
+  foreach_face()
+      muv.x[] = fm.x[] * 2 * bb / Re;
+  boundary((scalar *){muv});
+}
+
+/**
+The boundary conditions are inflow with unit velocity on the
+left-hand-side and outflow on the right-hand-side. */
+
+
+u.n[left]  = dirichlet(U0);
+p[left]    = neumann(0.);
+pf[left]   = neumann(0.);
+
+u.n[right] = neumann(0.);
+p[right]   = dirichlet(0.);
+pf[right]  = dirichlet(0.);
+
+// u.n[bottom] = dirichlet (0.);
+// u.t[bottom]  = dirichlet (1.);
+uf.n[bottom] = 0.0;
+//uf.t[bottom]  = dirichlet (1.);
+
+u.n[embed] = dirichlet(vb.x[]);
+u.t[embed] = dirichlet(vb.y[]);
+
+event init (t = 0) {
+
+  /**
+  We initially refine only in a sphere, slightly larger than the solid
+  sphere. */
+
+ if (!restore ("restart")) {
+  refine ((x > -15 && x <20 && y >= 0 && y <15) && level < maxlevel-5);
+  refine ((x > -4 && x <12 && y >=0 && y <4) && level < maxlevel-3);
+  refine ((x > -3 && x <8 && y >=0 && y <3) && level < maxlevel-1);
+  refine ((x > -2 && x <4 && y >=0 && y <2) && level < maxlevel + 1); 
+  refine ((sq(x/(aa+0.4)) + sq(y/(bb+0.4)) < 1.) && level < maxlevel + 2);
+  /**
+  We define the unit sphere. */
+
+  vertex scalar phi2[], phi_inverse[];
+  foreach_vertex()
+  {
+    phi2[] = sqrt(sq(x / aa) + sq(y / bb)) - R0;
+    phi_inverse[] = -sqrt(sq(x / aa) + sq(y / bb)) + R0;
+  }
+  boundary({phi2, phi_inverse});
+  fractions(phi2, cs, fs);
+  fractions(phi2, cs1, fs1);
+  // fractions (phi_inverse, css, fss);
+  foreach ()
+    css[] = 1. - cs[];
+  foreach_face()
+      fss.x[] = 1. - fs.x[];
+  boundary((scalar *){css, fss});
+
+  // initial metrics so that it will be multiplied with the solid fraction
+  cm_update(cm, cs, fs);
+  fm_update(fm, cs, fs);
+  restriction({cs, fs, cm, fm});
+  /**
+  We set the initially horizontal velocity to unity everywhere
+  (outside the sphere). */
+
+  foreach ()
+  {
+    u.x[] = U(y) * cs[];
+    ce[] = 0.;
+  }
+  boundary((scalar *){u1, u2, u});
+ }
+ else
+ {
+ }
+#if TREE
+  css.refine = embed_fraction_refine;
+  css.prolongation = fraction_refine;
+  foreach_dimension()
+      fss.x.prolongation = embed_face_fraction_refine_x;
+
+#endif
+  boundary({css, fss});
+  restriction({css, fss});
+
+  for (scalar s in{u, u1, u2, p, pf})
+    s.third = true;
+
+  for (scalar s in{u, u1, u2})
+    s.gradient = minmod2;
+}
+
+
+event logfile (i += 8)    //阻力升力系数
+{
+  char name_force[40];
+  sprintf(name_force, "data/force-%g", Re);
+  static FILE * force = fopen(name_force,"w");
+  coord Fp = {0.0,0.0}, Fmu = {0.0,0.0};
+  double Tp = 0.0, Tmu = 0.0;
+  coord center = {0, 0};
+  bool torque = true;
+  
+  double coef_axi = AXI ? 0.5 / pi : 1.0;
+
+  double coef_fd = ((3.141593*bb*bb*U0*U0)/2.) * coef_axi;
+  double coef_fl = ((4.*3.141593*aa*bb*bb*belta*U0*U0)/3.) * coef_axi;
+  double coef_t = ((3.141593*bb*bb*belta*U0)/2.) * coef_axi;
+  //fixme:add force computation
+  bubble_force (p_d, u_st, mu_st, center, torque, &Fp, &Fmu, &Tp, &Tmu);
+
+  Fp.x /= coef_fd;
+  Fp.y /= coef_fd;
+  
+  Fmu.x /= coef_fd;
+  Fmu.y /= coef_fd;
+  
+  Tp/= coef_fd;
+  Tmu/= coef_fd;
+
+  if (i == 0)
+    fputs("# 1: t sh (1,2): Total force (3,4): Pressure force (5,6): Viscous force (7,8): Pressure moment (9): Viscous moment (10)\n", force);
+
+  double Sh = 0.;
+  double Sh2 = 0.;
+
+  foreach (reduction(+ : Sh) reduction(+ : Sh2))
+  {
+    sh_local[] = 0.0;
+    if (cs[] > 0. && cs[] < 1.)
+    {
+
+      coord n, nn, p;
+      double area = embed_geometry(point, &p, &n);
+      area *= pow(Delta, dimension - 1);
+      if (metric_embed_factor)
+        area *= metric_embed_factor(point, p);
+
+
+      double coef = 0.0;
+      double sh1 = area * dirichlet_gradient(point, ce, cs, n, p, 1.0, &coef);
+      double sh2 = area;
+
+      sh_local[] = sh1/sh2 * 2.0 * bb;
+
+      Sh += sh1 * 2.0 * bb;
+      Sh2 += area;
+    }
+  }
+
+  fprintf (force, "%g %g %g %g %g %g %g %g %g %g\n", t, Sh/Sh2, Fp.x+Fmu.x, Fp.y+Fmu.y, Fp.x, Fp.y, Fmu.x, Fmu.y, Tp, Tmu);
+  fflush (force);
+}
+
+event adapt (i++,last) {
+
+  foreach_face()
+  {
+    if (uf.x[] && !fs.x[])
+      uf.x[] = 0.;
+  }
+  boundary((scalar *){uf});
+
+  foreach ()
+    foreach_dimension()
+    {
+      u_st.x[] = u.x[];
+      u.x[] = cs[] * u_st.x[] + (1 - cs[]) * u_st2.x[];
+    }
+  boundary((scalar *){u_st});
+
+  foreach ()
+  {
+    foreach_dimension()
+    {
+      u1.x[] = u_st.x[];
+      u2.x[] = u_st2.x[];
+    }
+  }
+  boundary((scalar *){u1, u2});
+
+  embedded_velocity_explicit2();
+
+  foreach ()
+  {
+    p_d[] = p[];
+    foreach_dimension()
+    {
+      u.x[] = u_st2.x[];
+      g_st.x[] = g.x[];
+      g.x[] = g_st2.x[];
+    }
+}
+boundary((scalar*){p_d,u_st,g_st,g,u});
+
+foreach_face()
+{
+  mu_st.x[] = fm.x[] * 2 * bb / Re;
+}
+boundary((scalar *){mu_st});
+
+foreach_face()
+{
+  fs.x[] = 1. - fs.x[];
+}
+boundary((scalar *){fs});
+
+//doing this will restrict the effficiency a lot
+foreach ()
+{
+  cs[] = 1. - cs[];
+  p[] = 0.;
+  pf[] = 0.;
+}
+boundary({cs, p, pf});
+
+cm_update (cm, cs, fs);
+fm_update (fm, cs, fs);
+restriction ({cs, fs, cm, fm});
+
+boundary((scalar *){u});
+trash({uf});
+foreach_face()
+    uf.x[] = fm.x[] * face_value(u.x, 0);
+boundary((scalar *){uf});
+
+event("defaults");
+event("properties");
+
+foreach_face()
+    uf.x[] = fm.x[] * face_value(u.x, 0);
+boundary((scalar *){uf});
+
+foreach_face()
+    muv.x[] = 1.0/RHOSTAR * MUSTAR * fm.x[] * 2 * bb / Re;
+boundary((scalar *){muv});
+
+event("advection_term");
+event("viscous_term");
+event("acceleration");
+event("projection");
+
+foreach_face()
+{
+  if (uf.x[] && !fs.x[])
+    uf.x[] = 0.;
+}
+boundary((scalar *){uf});
+
+foreach_face()
+{
+  fs.x[] = 1. - fs.x[];
+}
+boundary((scalar *){fs});
+
+foreach ()
+{
+  cs[] = 1. - cs[];
+  p[] = 0.;
+  pf[] = 0.;
+  foreach_dimension()
+  {
+    u_st2.x[] = u.x[];
+    g_st2.x[] = g.x[];
+    g.x[] = g_st.x[];
+  }
+}
+
+cm_update (cm, cs, fs);
+fm_update (fm, cs, fs);
+restriction ({cs, fs, cm, fm});
+
+boundary((scalar*){u_st2});
+
+foreach ()
+  foreach_dimension()
+  {
+    u.x[] = cs[] * u_st.x[] + (1 - cs[]) * u_st2.x[];
+  }
+
+foreach ()
+  foreach_dimension()
+  {
+    u.x[] = u_st.x[];
+  }
+
+boundary((scalar*){cs,p,pf,g_st2,g,u});
+
+foreach ()
+  foreach_dimension()
+  {
+    u1.x[] = u_st.x[];
+    u2.x[] = u_st2.x[];
+  }
+}
+
+event outLog(i++)
+{
+  if(i % 10 == 0)
+  {
+    printf("i = %d, t = %g\n", i, t);
+  }
+}
+
+event dumps(t = 0; t < tend; t += 0.5)
+{
+  char fn[399];
+  sprintf(fn, "data/dump%g", t);
+  dump(fn);
+
+  vector u_v[];
+  foreach ()
+    foreach_dimension()
+        u_v.x[] = cs[] * u1.x[] + (1. - cs[]) * u2.x[];
+  boundary((scalar *){u_v});
+
+  char name2[40];
+  sprintf(name2, "data/vel-%g", t);
+  FILE *fp_inf = fopen(name2, "w");
+  foreach()
+  {
+    if (x > 0.0 && x - Delta < 0.0 && y > 0.0 && y < 2.0)
+      fprintf(fp_inf,
+              "%g %g %g \n",
+              y, u_v.x[], u_v.y[]);
+  }
+  fflush(fp_inf);
+  fclose(fp_inf); 
+
+  char name3[40];
+  sprintf(name3, "data/inf-%g", t);
+  fp_inf = fopen(name3, "w");
+  foreach ()
+  {
+    if (cs[] > 0. && cs[] < 1.)
+    {
+      Point mypoint = point;
+      double vc = sqrt(sq(vb.x[]) + sq(vb.y[]));
+      coord n = facet_normal(point, cs, fs), p;
+      double alpha = plane_alpha(cs[], n);
+      double area = plane_area_center(n, alpha, &p);
+      normalize(&n);
+      double xx = x + p.x * Delta;
+      double yy = y + p.y * Delta;
+      double ang = pi - atan2(yy, xx);
+      coord t1 = {t11.x[], t11.y[]};
+      coord vbf = {vb.x[], vb.y[]};
+      coord vbl = velFix2Local2D(vbf, n, t1);
+      double omega = -embed_vorticity(point, u, p, n);
+
+      double coef;
+      double gradx = dirichlet_gradient(point, u.x, cs, n, p, vb.x[], &coef);
+      double grady = dirichlet_gradient(point, u.y, cs, n, p, vb.y[], &coef);
+      coord gradv = {gradx + vb.x[], grady + vb.y[]};
+      coord gradc = velFix2Local2D(gradv, n, t1);
+      double omega2 = -gradc.x + 2.0 * vbl.x;
+
+      fprintf(fp_inf, "%g %g %g %g\n", ang, vc, omega2, sh_local[] / sqrt(Pe));
+    }
+  }
+  fflush(fp_inf);
+  fclose(fp_inf);
+}
+
+event ppt(t = 0; t < tend; t += 1.)
+{
+  // vector u_v[];
+  // foreach ()
+  //   foreach_dimension()
+  //       u_v.x[] = cs[] * u1.x[] + (1. - cs[]) * u2.x[];
+  // boundary((scalar *){u_v});
+  
+  
+  // vorticity (u_v, vort);
+  // boundary((scalar *){vort});
+
+  scalar phia[];
+  foreach ()
+    phia[] = cs[] * ce[] + (1 - cs[]) * 1.0;
+  boundary({phia});
+
+  clear();
+  view(quat = {0.000, 0.000, 0.000, 1.000},
+       fov = 30, near = 0.01, far = 1000,
+       tx = -0.001, ty = -0.002, tz = -0.180,
+       width = 1554, height = 895);
+  squares("phia", min = 0, max = 1, linear = true, map = jet);
+  mirror({0, 1})
+  {
+    squares("phia", min = 0, max = 1, linear = true, map = jet);
+  }
+  char moviename[80];
+  sprintf(moviename, "data/test%d.png", pic);
+  save(moviename);
+
+  pic++;
+}
+
+event end(t = tend)
+{
+  // do nothing
+}
