@@ -1,4 +1,4 @@
-//AXI case
+//AXI case       //轴对称模拟
 #define NOT_PRINCIPLE 0
 int pic=0;
 scalar cs1[],css[];
@@ -23,7 +23,7 @@ double aa = 1.0;
 #define Re 100.    
 #define MUSTAR (0.01)      //两相的粘度比
 #define RHOSTAR (0.01)    //两相的密度比
-#define CDT (0.005)
+#define CDT (0.005)       //时间步长
 #include "h/embedSlip.h"
 #include "axi.h"
 #include "h/2nd_drop.h"
@@ -40,19 +40,19 @@ double aa = 1.0;
 This is the maximum level of refinement i.e. an equivalent maximum
 resolution of $256^3$. */
 
-int maxlevel = 11;
-const double tend = 100;
+int maxlevel = 11;   //网格最大细化层级
+const double tend = 100;    //模拟结束时间为100s
 
 /**
-We need a new field to define the viscosity. */
+We need a new field to define the viscosity. */ //粘度定义
 
-#define U0 1.
-#define R0 1.
+#define U0 1.       //基准流速
+#define R0 1.       //气泡半径
 
-#define WIDTH 160.
-#define Sr 0.
-#define belta U0*Sr/2/R0
-#define U(y) (U0+belta*y)
+#define WIDTH 160.  //计算域宽度
+#define Sr 0.       //剪切速率(定义流场速度梯度)
+#define belta U0*Sr/2/R0    //剪切率转化参数
+#define U(y) (U0+belta*y)    //入口速度分布
 
 /**
 The domain size is $16^3$. We move the origin so that the center of
