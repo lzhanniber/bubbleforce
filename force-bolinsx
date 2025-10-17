@@ -20,9 +20,9 @@ double SigR=1.;
 double aspect_ratio = 1.0;
 double bb = 1.0;
 double aa = 1.0;
-#define Re 100.
-#define MUSTAR (0.01)
-#define RHOSTAR (0.01)
+#define Re 100.    
+#define MUSTAR (0.01)      //两相的粘度比
+#define RHOSTAR (0.01)    //两相的密度比
 #define CDT (0.005)
 #include "h/embedSlip.h"
 #include "axi.h"
