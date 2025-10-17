@@ -61,22 +61,22 @@ the unit sphere is not too close to boundaries. */
 int main()
 {
   init_grid(32);
-  size(WIDTH);
-  origin(-L0 / 2., 0.0);
-  mu = muv;
+  size(WIDTH);          //设置计算域大小
+  origin(-L0 / 2., 0.0);  
+  mu = muv;              //使用定义的黏度分布 muv 来替代basilisk默认常数黏度mu
   //periodic(right);
-  TOLERANCE = 1E-6;
-  bb = pow(aspect_ratio, 1.0/3.0);
+  TOLERANCE = 1E-6;       //设置收敛容差
+  bb = pow(aspect_ratio, 1.0/3.0);   //aspect_ratio 是气泡长短轴比 当 aspect_ratio>1 时：bb是较长的半轴  aa是较短的半轴
   aa = bb / aspect_ratio;
   CFL = 0.8;
-  Pe = 100;
-  DT = CDT;
+  Pe = 100;   //设置 Péclet 数 (Pé)，表征对流与扩散的比值：Pe=UL/D
+  DT = CDT;    //设置时间步长
   run();
 }
 
 /**
 The viscosity is just $1/Re$, because we chose a sphere of diameter
-unity and an unit inflow velocity. */
+unity and an unit inflow velocity./
 
 event properties (i++)
 {
