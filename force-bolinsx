@@ -83,11 +83,11 @@ event properties (i++)
   boundary((scalar *){u});
   trash({uf});
   foreach_face()
-      uf.x[] = fm.x[] * face_value(u.x, 0);
+      uf.x[] = fm.x[] * face_value(u.x, 0); //把单元中心速度 u 插值到面上
   boundary((scalar *){uf});
 
   foreach_face()
-      muv.x[] = fm.x[] * 2 * bb / Re;
+      muv.x[] = fm.x[] * 2 * bb / Re;   
   boundary((scalar *){muv});
 }
 
