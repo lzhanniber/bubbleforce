@@ -61,8 +61,8 @@ the unit sphere is not too close to boundaries. */
 int main()
 {
   init_grid(32);
-  size(WIDTH);          //设置计算域大小
-  origin(-L0 / 2., 0.0);  
+  size(WIDTH);          //设置计算域大小 160*160
+  origin(-L0 / 2., 0.0);   //左下角定义为-80
   mu = muv;              //使用定义的黏度分布 muv 来替代basilisk默认常数黏度mu
   //periodic(right);
   TOLERANCE = 1E-6;       //设置收敛容差
@@ -93,24 +93,24 @@ event properties (i++)
 
 /**
 The boundary conditions are inflow with unit velocity on the
-left-hand-side and outflow on the right-hand-side. */
+left-hand-side and outflow on the right-hand-side. */   //流体从左侧边界进入计算域，流入时的速度为 无量纲速度 U0=1。
 
 
-u.n[left]  = dirichlet(U0);
-p[left]    = neumann(0.);
-pf[left]   = neumann(0.);
+u.n[left]  = dirichlet(U0);  //左侧法向速度为固定值 U0
+p[left]    = neumann(0.);    //压力梯度为零，  p为单元中心的压力
+pf[left]   = neumann(0.);    //pf为面上的压力
 
-u.n[right] = neumann(0.);
-p[right]   = dirichlet(0.);
+u.n[right] = neumann(0.);    //右侧法向速度梯度为0
+p[right]   = dirichlet(0.);   //压力固定为0
 pf[right]  = dirichlet(0.);
 
 // u.n[bottom] = dirichlet (0.);
 // u.t[bottom]  = dirichlet (1.);
-uf.n[bottom] = 0.0;
-//uf.t[bottom]  = dirichlet (1.);
+uf.n[bottom] = 0.0;         //底部边界面上的法向速度分量为 0
+//uf.t[bottom]  = dirichlet (1.);  //底部边界面上的切向速度分量为 1
 
 u.n[embed] = dirichlet(vb.x[]);
-u.t[embed] = dirichlet(vb.y[]);
+u.t[embed] = dirichlet(vb.y[]);  //在嵌入边界处（embed）设置速度边界条件，使流体速度与边界速度匹配,即ufluid=vboundary
 
 event init (t = 0) {
 
@@ -122,19 +122,19 @@ event init (t = 0) {
   refine ((x > -15 && x <20 && y >= 0 && y <15) && level < maxlevel-5);
   refine ((x > -4 && x <12 && y >=0 && y <4) && level < maxlevel-3);
   refine ((x > -3 && x <8 && y >=0 && y <3) && level < maxlevel-1);
-  refine ((x > -2 && x <4 && y >=0 && y <2) && level < maxlevel + 1); 
-  refine ((sq(x/(aa+0.4)) + sq(y/(bb+0.4)) < 1.) && level < maxlevel + 2);
+  refine ((x > -2 && x <4 && y >=0 && y <2) && level < maxlevel + 1);   //根据空间坐标对指定区域进行细化
+  refine ((sq(x/(aa+0.4)) + sq(y/(bb+0.4)) < 1.) && level < maxlevel + 2);  //在气泡附近进行细化，细化等级为maxlevel+2，0.4 是安全边距，让细化区域稍大于气泡
   /**
-  We define the unit sphere. */
+  We define the unit sphere. */ 
 
   vertex scalar phi2[], phi_inverse[];
   foreach_vertex()
   {
-    phi2[] = sqrt(sq(x / aa) + sq(y / bb)) - R0;
-    phi_inverse[] = -sqrt(sq(x / aa) + sq(y / bb)) + R0;
+    phi2[] = sqrt(sq(x / aa) + sq(y / bb)) - R0;  //定义一个phi函数，当phi2<0时在气泡内部
+    phi_inverse[] = -sqrt(sq(x / aa) + sq(y / bb)) + R0;  //-phi2
   }
   boundary({phi2, phi_inverse});
-  fractions(phi2, cs, fs);
+  fractions(phi2, cs, fs);     //定义了cs为单元内气泡的体积分数 fs为单元面的面分数
   fractions(phi2, cs1, fs1);
   // fractions (phi_inverse, css, fss);
   foreach ()
