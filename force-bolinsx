@@ -1,5 +1,5 @@
 //AXI case       //轴对称模拟
-#define NOT_PRINCIPLE 0
+#define NOT_PRINCIPLE 0  //表示本次模拟为标准（主方向）轴对称情况，不考虑非主方向流动或偏转
 int pic=0;
 scalar cs1[],css[];
 scalar vort[];
@@ -15,17 +15,17 @@ face vector mu_st[];
 scalar sh_local[];
 
 
-double Sig=0.001*2.;
-double SigR=1.;
-double aspect_ratio = 1.0;
-double bb = 1.0;
-double aa = 1.0;
+double Sig=0.001*2.;   //表面张力系数
+double SigR=1.;     //表面张力比值？
+double aspect_ratio = 1.0;   //气泡长短轴比
+double bb = 1.0;   //气泡的长半轴
+double aa = 1.0;   // 气泡的短半轴
 #define Re 100.    
 #define MUSTAR (0.01)      //两相的粘度比
 #define RHOSTAR (0.01)    //两相的密度比
 #define CDT (0.005)       //时间步长
-#include "h/embedSlip.h"
-#include "axi.h"
+#include "h/embedSlip.h"  //嵌入边界方法（滑移边界）
+#include "axi.h"    
 #include "h/2nd_drop.h"
 //#include "navier-stokes/centered_sbim.h"
 #include "navier-stokes/centered.h"
@@ -80,14 +80,14 @@ unity and an unit inflow velocity./
 
 event properties (i++)
 {
-  boundary((scalar *){u});
-  trash({uf});
+  boundary((scalar *){u});  //调用 Basilisk 内置的边界处理函数 boundary()，确保速度场 u 满足边界条件
+  trash({uf});  //将 uf.x[] 的所有值设为“未定义”（NaN 或 0）,重置面速度向量场 uf,防止旧时间步残留的面速度影响新计算
   foreach_face()
       uf.x[] = fm.x[] * face_value(u.x, 0); //把单元中心速度 u 插值到面上
   boundary((scalar *){uf});
 
   foreach_face()
-      muv.x[] = fm.x[] * 2 * bb / Re;   
+      muv.x[] = fm.x[] * 2 * bb / Re;   //无量纲面粘度
   boundary((scalar *){muv});
 }
 
