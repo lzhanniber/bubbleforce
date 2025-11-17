@@ -1,0 +1,241 @@
+//axi
+#include "grid/multigrid.h"
+#if AXIS
+# include "axi.h" // fixme: does not run with -catch
+#endif
+#if MOMENTUM
+# include "momentum.h"
+#else
+#include "navier-stokes/centered.h"
+#if CASE2
+# define FILTERED 1
+#endif
+#if CLSVOF
+# include "two-phase-clsvof.h"
+#elif LEVELSET
+# include "two-phase-levelset.h"
+#else
+# include "two-phase.h"
+#endif
+#endif
+#if LEVELSET
+# include "integral.h"
+#else
+# include "tension.h"
+#endif
+#if REDUCED
+# include "reduced.h"
+#endif
+
+#ifndef LEVEL
+# define LEVEL 10
+#endif
+
+/**
+The boundary conditions are slip lateral walls (the default) and
+no-slip on the right and left walls. */
+
+#if MOMENTUM  //动量
+q.t[right] = dirichlet(0); //q为动量密度
+q.t[left]  = dirichlet(0);
+#else
+u.t[right] = dirichlet(0);
+u.t[left]  = dirichlet(0);
+#endif
+
+int main() {
+
+  /**
+  The domain will span $[0:2]\times[0:0.5]$ and will be resolved with
+  $256\times 64$ grid points. */
+
+  dimensions (nx = 40);  //设置x：y=4：1
+  size (50 [1]);
+  DT = 1. [0,1];
+  init_grid (1 << LEVEL);
+  
+  /**
+  Hysing et al. consider two cases (1 and 2), with the densities, dynamic
+  viscosities and surface tension of fluid 1 and 2 given below. */
+
+  rho1 = 1000.[0], mu1 = 10.;  // works also with rho1 = 1000.[-3,0,1]
+#if CASE2
+  rho2 = 1., mu2 = 0.1;
+#else
+  rho2 = 100., mu2 = 1.;
+#endif
+
+#if LEVELSET
+  #if CASE2
+  const scalar sigma[] = 1.96;
+  #else
+  const scalar sigma[] = 24.5;
+  #endif
+  d.sigmaf = sigma;
+#else // !LEVELSET
+  #if CASE2
+  f.sigma = 1.96;
+  #else
+  f.sigma = 24.5;
+  #endif
+#endif // !LEVELSET
+  
+  /**
+  We reduce the tolerance on the Poisson and viscous solvers to
+  improve the accuracy. */
+  
+  TOLERANCE = 1e-4 [*];
+#if REDUCED
+  G.x = -0.98;
+  Z.x = 1.;
+#endif
+  run();
+}
+
+event init (t = 0) {
+
+  /**
+  The bubble is centered on (0.5,0) and has a radius of 0.25. */
+
+#if LEVELSET
+  foreach()
+    d[] = sqrt (sq(x - 0.5) + sq(y)) - 0.25;
+#else
+  fraction (f, sq(x - 0.5) + sq(y) - sq(0.25));
+#endif
+}
+
+/**
+We add the acceleration of gravity. */
+
+#if !REDUCED
+event acceleration (i++) {
+  face vector av = a;
+  foreach_face(x)
+    av.x[] -= 0.98;
+}
+#endif
+
+/**
+A utility function to check the convergence of the multigrid
+solvers. */
+
+void mg_print (mgstats mg)
+{
+  if (mg.i > 0 && mg.resa > 0.)
+    printf ("%d %g %g %g %d ", mg.i, mg.resb, mg.resa,
+	    mg.resb > 0 ? exp (log (mg.resb/mg.resa)/mg.i) : 0.,
+	    mg.nrelax);
+}
+
+/**
+We log the position of the center of mass of the bubble, its velocity
+and volume as well as convergence statistics for the multigrid
+solvers. */
+
+event logfile (i++) {
+  double xb = 0., yb = 0., vb = 0., sb = 0.;
+  foreach(reduction(+:xb) reduction(+:vb) reduction(+:yb)reduction(+:sb)) {
+    double dv = (1. - f[])*dv();
+#if MOMENTUM
+    vb += q.x[]*dv/rho(f[]);
+#else
+    vb += u.x[]*dv;
+#endif
+    xb += x*dv;
+    yb += y*dv;
+    sb += dv;
+  }
+  //计算气泡质心
+  double xc = xb/sb;
+  double yc = yb/sb;
+
+  //计算气泡长短轴
+  double a = 0., b = 0.;
+  foreach(reduction(max:a) reduction(max:b)) 
+  {
+    if (f[] > 0.5)    // 气泡内部
+    { 
+      double dx = fabs(x - xc);
+      double dy = fabs(y - yc);
+      if (dx > b) b = dx;
+      if (dy > a) a = dy;
+    }
+  }
+
+  //计算A和d
+  double Vb = 4./3.*M_PI*a*b*b;
+  double A  = M_PI*b*b; // 迎风面积
+  double d  = pow(6.*Vb/M_PI, 1./3.); // 等效直径
+
+  //计算平均上升速度
+  double Ub = vb/sb;
+
+  //计算阻力、阻力系数
+  double Fb = rho1 * 0.98 * Vb;  
+  double CD = 2.*Fb / (rho1*Ub*Ub*A + 1e-30);
+  double Re = rho1*fabs(Ub)*d / mu1;
+
+  static double sb0 = 0.;
+  if (i == 0) {
+    printf ("t Fb Re Cd sb -1 xb vb dt perf.t perf.speed\n");
+    sb0 = sb;
+  }
+  printf ("%g %g %g %g %g %g %g %g %g %g %g ", 
+	  t, Fb, Re, CD, (sb - sb0)/sb0, -1., xc, vb/sb, dt, perf.t, perf.speed);
+#if !MOMENTUM
+  mg_print (mgp);
+  mg_print (mgpf);
+  mg_print (mgu);
+#endif
+  putchar ('\n');
+  fflush (stdout);
+}
+
+/**
+At $t=3$ we output the shape of the bubble. */
+FILE *ffmpeg_gif = NULL;
+FILE *ffmpeg_mp4 = NULL;
+
+// 替换你的 movies 事件
+event movies (i += 10) {
+  static int nf = 0;
+  if (nf++ == 0) {
+    // 启动 ffmpeg 管道（实时接收 PPM 图像流）
+    ffmpeg_gif = popen(
+      "ffmpeg -y -f image2pipe -vcodec ppm -r 20 -i - "
+      "-loop 0 -vf 'scale=512:trunc(iw*0.5/2)*2' bubble.gif", "w");
+    ffmpeg_mp4 = popen(
+      "ffmpeg -y -f image2pipe -vcodec ppm -r 20 -i - "
+      "-c:v libx264 -pix_fmt yuv420p -vf 'scale=512:trunc(iw*0.5/2)*2' bubble.mp4", "w");
+  }
+
+  // 正确调用：前两个是位置参数，其余是命名参数
+  output_ppm (f, ffmpeg_gif, n = 512, min = 0, max = 1, linear = true);
+  output_ppm (f, ffmpeg_mp4, n = 512, min = 0, max = 1, linear = true);
+}
+
+event end (t = end) {
+  if (ffmpeg_gif) pclose(ffmpeg_gif);
+  if (ffmpeg_mp4) pclose(ffmpeg_mp4);
+  fprintf(stderr, "Animation generated: bubble.gif and bubble.mp4\n");
+}
+#if _GPU && SHOW
+event display (i++) {
+  output_ppm (f, fp = NULL, fps = 30, spread = -1, n = 1024);
+  scalar omega[];
+  vorticity (u, omega);
+  output_ppm (omega, fp = NULL, fps = 30, spread = 6, n = 1024);
+}
+#endif
+
+#if ADAPT
+event adapt (i++) {
+  adapt_wavelet ({f,u}, (double[]){5e-4,1e-3,1e-3}, LEVEL);
+}
+#endif
+
+
+event stop(t=10.){
+  printf("simution stop at 50s");
+}
